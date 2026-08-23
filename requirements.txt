@@ -1,0 +1,6 @@
+yfinance
+numpy
+panda
+spicy
+matplotlib
+pytest
