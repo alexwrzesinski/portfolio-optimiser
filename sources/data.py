@@ -22,6 +22,11 @@ def price_fetcher(tickers, start, end):
         {t: data[t]["Close"] for t in tickers
                 }
     )
+    bad = [t for t in tickers if prices[t].isna().all()]
+    if bad:
+        raise ValueError(f"No data returned for: {bad}")
+
+    prices = prices.dropna(how="any")
     return prices
 
 def compute_returns(prices):

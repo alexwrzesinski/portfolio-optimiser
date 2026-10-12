@@ -8,11 +8,36 @@ yfinance calls, so these run fast and don't depend on network access.
 import pandas as pd
 import numpy as np
 import pytest
-from sources.data import compute_returns, analyse_returns
+from sources.data import compute_returns, analyse_returns, price_fetcher
 
+# Fake yfinance data with one all-NaN ticker; checks price_fetcher raises ValueError instead of passing it on.
+def test_price_fetcher_bad_ticker_raises(monkeypatch):
+    idx = pd.date_range("2023-01-01", periods=3)
+    cols = pd.MultiIndex.from_product([["AAPL", "BAD"], ["Close"]])
+    fake = pd.DataFrame(
+        [[100, np.nan], [101, np.nan], [102, np.nan]], index=idx, columns=cols
+    )
+    monkeypatch.setattr("sources.data.yf.download", lambda *a, **k: fake)
 
+    with pytest.raises(ValueError):
+        price_fetcher(["AAPL", "BAD"], "2023-01-01", "2023-01-04")
+
+# Fake data where one stock starts late; checks price_fetcher trims every stock to the dates they all share.
+def test_price_fetcher_late_ipo_aligns_dates(monkeypatch):
+    idx = pd.date_range("2023-01-01", periods=4)
+    cols = pd.MultiIndex.from_product([["AAPL", "NEW"], ["Close"]])
+    fake = pd.DataFrame(
+        [[100, np.nan], [101, np.nan], [102, 50], [103, 51]], index=idx, columns=cols
+    )
+    monkeypatch.setattr("sources.data.yf.download", lambda *a, **k: fake)
+
+    result = price_fetcher(["AAPL", "NEW"], "2023-01-01", "2023-01-05")
+
+    assert len(result) == 2
+    assert not result.isna().any().any()
 # ---------- compute_returns ----------
 
+# Checks compute_returns gives the hand-calculated % changes (e.g. 100 -> 102 is 0.02).
 def test_compute_returns_basic():
     """Check returns are calculated correctly against hand-computed values."""
     fake_prices = pd.DataFrame({
@@ -27,7 +52,7 @@ def test_compute_returns_basic():
     assert abs(result["AAPL"].iloc[0] - expected_day2) < 1e-6
     assert abs(result["AAPL"].iloc[1] - expected_day3) < 1e-6
 
-
+# Checks the NaN first row is removed, so 3 prices give 2 returns and no NaNs remain.
 def test_compute_returns_drops_first_row():
     """First row (NaN from pct_change) should be dropped, not present."""
     fake_prices = pd.DataFrame({
@@ -40,7 +65,7 @@ def test_compute_returns_drops_first_row():
     assert len(result) == 2
     assert not result.isna().any().any()  # no NaNs anywhere in the result
 
-
+# Checks each ticker's returns are calculated separately, using MSFT as the check.
 def test_compute_returns_multiple_tickers():
     """Each column's returns should be computed independently."""
     fake_prices = pd.DataFrame({
@@ -55,7 +80,7 @@ def test_compute_returns_multiple_tickers():
 
 
 # ---------- analyse (annualize_stats) ----------
-
+# Checks analyse gives one mean per ticker and a square covariance matrix (tickers x tickers).
 def test_analyse_shapes():
     """Mean should be one value per ticker; cov should be square (tickers x tickers)."""
     fake_returns = pd.DataFrame({
@@ -68,7 +93,7 @@ def test_analyse_shapes():
     assert len(avg) == 2                     # one mean per ticker
     assert cov.shape == (2, 2)                # square matrix, tickers x tickers
 
-
+# Checks the covariance matrix is symmetric, i.e. AAPL-vs-MSFT equals MSFT-vs-AAPL.
 def test_analyse_cov_symmetric():
     """Covariance matrix must be symmetric: cov[A][B] == cov[B][A]."""
     fake_returns = pd.DataFrame({
@@ -80,7 +105,7 @@ def test_analyse_cov_symmetric():
 
     assert abs(cov.loc["AAPL", "MSFT"] - cov.loc["MSFT", "AAPL"]) < 1e-10
 
-
+# Checks the annual mean is the daily mean x 252, not the raw daily mean.
 def test_analyse_annualization_scaling():
     """Mean should be daily mean * 252, not just the raw daily mean."""
     fake_returns = pd.DataFrame({
@@ -94,7 +119,7 @@ def test_analyse_annualization_scaling():
 
 
 # ---------- edge cases ----------
-
+# Checks compute_returns raises ValueError on an empty DataFrame rather than quietly returning nothing.
 def test_compute_returns_empty_raises():
     """Empty prices DataFrame should raise, not silently return garbage."""
     empty_prices = pd.DataFrame()
