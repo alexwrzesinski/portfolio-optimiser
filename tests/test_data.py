@@ -126,3 +126,4 @@ def test_compute_returns_empty_raises():
 
     with pytest.raises(ValueError):
         compute_returns(empty_prices)
+
